@@ -6,5 +6,7 @@ import (
 )
 
 func main() {
-	fmt.Printf("Hello, your runtime is: %s\n", runtime.GOOS)
+	fmt.Println("Hello!")
+	fmt.Println("Your os is:", runtime.GOOS)
+	fmt.Println("Your arch is:", runtime.GOARCH)
 }
