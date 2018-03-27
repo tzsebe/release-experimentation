@@ -1,0 +1,81 @@
+#!/bin/bash
+set -e
+
+function die() {
+  echo -e >&2 "$@"
+  exit 1
+}
+
+
+command -v git > /dev/null 2>&1 || die "git is not installed. Bailing!"
+command -v go > /dev/null 2>&1 || die "go is not installed. Bailing!"
+command -v virtualenv > /dev/null 2>&1 || die "virtualenv is not installed. Bailing!"
+
+API_TOKEN_FILE=$HOME/.github-release-api-token
+RELEASE_VIRTUALENV_DIR=$HOME/virtual-envs/tzsebe-releaser
+BUILD_DIR=$(go env GOPATH)/src/github.com/tzsebe/release-experimentation
+RELEASE_DIR=$BUILD_DIR/release
+OUTPUT_DIR=$RELEASE_DIR/output
+
+[[ -d $BUILD_DIR ]] || die "Directory $BUILD_DIR does not exist."
+[[ -d $RELEASE_DIR ]] || die "Directory $RELEASE_DIR does not exist."
+[[ -f $API_TOKEN_FILE ]] || die "File $API_TOKEN_FILE does not exist."
+[[ $(stat --format '%a' $API_TOKEN_FILE) == "400" ]] || die "File $API_TOKEN_FILE must have mode '400'"
+
+# If the virtual environment doesn't exist, create it.
+if [[ ! -d $RELEASE_VIRTUALENV_DIR ]]; then
+  echo "Creating virtualenv at $RELEASE_VIRTUALENV_DIR..."
+  mkdir -p $RELEASE_VIRTUALENV_DIR
+  virtualenv $RELEASE_VIRTUALENV_DIR
+fi
+
+(
+  # Start up the virtual environment and install all necessary packages.
+  source $RELEASE_VIRTUALENV_DIR/bin/activate
+  [[ ! -z $VIRTUAL_ENV ]] || die "Failed to activate virtual environment!"
+  echo "Activated virtual environment: $VIRTUAL_ENV"
+  cd $BUILD_DIR
+  pip install -r release/requirements.txt
+  echo "Done with setup."
+
+  # If your tests fail, YOU fail. :)
+  echo "Running unit tests."
+  go test ./... || die "\nUnit tests are failing. Not allowing release to proceed."
+  echo "Done running tests."
+
+  # Run all the builds
+  echo "Creating builds..."
+  rm -rf $OUTPUT_DIR
+  for os_arch in "linux_amd64" "windows_amd64"; do
+    build_os=$(echo $os_arch | cut -f1 -d_)
+    build_arch=$(echo $os_arch | cut -f2 -d_)
+    echo "Building for OS $build_os, ARCH $build_arch..."
+    mkdir -p $OUTPUT_DIR/$os_arch
+
+    if [[ $build_os == "windows" ]]; then
+      echo "  build..."
+      GOOS=$build_os GOARCH=$build_arch go build -o $OUTPUT_DIR/$os_arch/hello/hello.exe hello/hello.go
+      echo "  compress..."
+      pushd $OUTPUT_DIR/$os_arch
+      zip -r -q ../hello-$os_arch.zip hello
+      popd
+    else
+      echo "  build..."
+      GOOS=$build_os GOARCH=$build_arch go build -o $OUTPUT_DIR/$os_arch/hello/hello hello/hello.go
+      echo "  compress..."
+      tar -czf $OUTPUT_DIR/hello-$os_arch.tar.gz -C $OUTPUT_DIR/$os_arch hello/hello
+    fi
+    echo "  cleanup..."
+    rm -rf $OUTPUT_DIR/$os_arch
+  done
+
+  # Get current state and pass it along.
+  LATEST_COMMIT=$(git log | head -n1 | cut -d ' ' -f2)
+  CURRENT_BRANCH=$(git branch | grep '^*' | head -n1 | cut -c 3-)
+  [[ ! -z $LATEST_COMMIT ]] || die "Failed to retrieve latest git commit!"
+  [[ ! -z $CURRENT_BRANCH ]] || die "Failed to retrieve current branch!"
+  echo "Current commit: [$CURRENT_BRANCH]@[$LATEST_COMMIT]"
+  API_TOKEN_FILE=$API_TOKEN_FILE SNAPSHOT_COMMIT=$LATEST_COMMIT SNAPSHOT_BRANCH=$CURRENT_BRANCH ASSET_DIR=$OUTPUT_DIR python release/release.py
+)
+
+echo "Done!"

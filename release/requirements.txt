@@ -1,0 +1,21 @@
+# Install dependencies needed for release.
+
+# Steps for manual setup:
+#
+# mkdir -p ~/virtual-envs/tzsebe-releaser
+# virtualenv ~/virtual-envs/tzsebe-releaser
+# source ~/virtual-envs/tzsebe-releaser/bin/activate
+# echo $VIRTUAL_ENV
+# pip install -r requirements.txt
+# deactivate
+#
+# Steps for manual run:
+#
+# source ~/virtual-envs/tzsebe-releaser/bin/activate
+# echo $VIRTUAL_ENV
+# python releaser.py
+# deactivate
+
+
+pygithub
+python-yubico
