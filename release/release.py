@@ -1,19 +1,21 @@
 #!/usr/bin/env python
 
+import argparse
 import os
+import re
 import sys
 import yubico
 
 from github import Github
 
-# Populated by parent script.
-# (TODO: don't be lazy, make these command line arguments or something...)
-API_TOKEN_FILE = os.environ.get("API_TOKEN_FILE")
-SNAPSHOT_COMMIT = os.environ.get("SNAPSHOT_COMMIT")
-SNAPSHOT_BRANCH = os.environ.get("SNAPSHOT_BRANCH")
-ASSET_DIR = os.environ.get("ASSET_DIR")
 
-REPO_NAME = "tzsebe/release-experimentation"
+def get_valid_input(msg, pattern):
+  p = re.compile(pattern)
+  while True:
+    result = raw_input(msg + ": ")
+    if p.match(result):
+      return result
+
 
 def main():
   #TODO: try to get this to work to avoid needing the separate API token?
@@ -21,48 +23,61 @@ def main():
   #yk = yubico.find_yubikey(debug=True)
   #print yk
 
-  print "Reading token..."
+  # Parse all arguments
+  parser = argparse.ArgumentParser(description="Release the agent.")
+  parser.add_argument("api_token_file", help="File containing a single line: your github API token.")
+  parser.add_argument("repo_name", help="Name of the github repo to release into.")
+  parser.add_argument("commit_id", help="Commit ID of this release.")
+  parser.add_argument("asset_dir", help="Directory containing assets to upload (binaries, etc.)")
+  args = parser.parse_args()
+
+  # Validate input
+  if not os.path.isfile(args.api_token_file):
+    parser.print_help()
+    raise SystemExit("%s does not exist or is not a file." % args.api_token_file)
+
+  if not os.path.isdir(args.asset_dir):
+    parser.print_help()
+    raise SystemExit("%s does not exist or is not a directory." % args.asset_dir)
+
+  if not re.match("^[0-9a-f]{40}$", args.commit_id):
+    parser.print_help()
+    raise SystemExit("%s is not a valid commit_id." % args.commit_id)
+
+  # Read our GitHub API token from the designated file.
   api_token = ''
-  with open(API_TOKEN_FILE) as f:
+  with open(args.api_token_file) as f:
     api_token = f.readline().strip()
 
-  print "Token (head) is: ", api_token[:3]
-
-  print "Initializing github object..."
+  # Initialize GitHub client and look up our repo.
   gh = Github(api_token)
-
-  #for repo in gh.get_user().get_repos():
-  #  print repo.full_name
-
-  repo = gh.get_repo(REPO_NAME)
+  repo = gh.get_repo(args.repo_name)
 
   print "Checking existing releases..."
   for release in repo.get_releases():
-    print "{0}\t{1}".format(release.tag_name, release.title)
     if release.draft:
-      print "Release {0} is already a draft; Publish that release first, or discard it and make a new one.".format(release.title)
+      print "ERROR: Release '{0}' is already a draft; Publish that release first, or discard it and make a new one.".format(release.title)
       sys.exit(1)
 
-
-  release_name = raw_input("Enter release name: ")
-  release_tag = raw_input("Enter git tag for release: ")
+  release_name = get_valid_input("Enter release name", ".{10}")
+  release_tag = get_valid_input("Enter a release tag (must be of format 'v1.0.0')", "^v\d+\.\d+\.\d+$")
 
   print "Creating new draft release..."
   release = repo.create_git_tag_and_release(
       tag=release_tag,
       tag_message="tag message for " + release_tag,
       release_name=release_name,
-      release_message="release message for " + release_name,
-      object=SNAPSHOT_COMMIT,
+      release_message="Release: %s\nbased on commit: %s" % (release_name, args.commit_id),
+      object=args.commit_id,
       type="commit",
       draft=True,
       prerelease=True)
 
   print "Uploading assets..."
-  for (dirpath, dirnames, filenames) in os.walk(ASSET_DIR):
+  for (dirpath, dirnames, filenames) in os.walk(args.asset_dir):
     for filename in filenames:
       print "  Uploading " + filename + "..."
-      release.upload_asset(os.path.join(ASSET_DIR, filename))
+      release.upload_asset(os.path.join(args.asset_dir, filename))
 
 if __name__ == "__main__":
   main()
